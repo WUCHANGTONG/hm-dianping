@@ -1,0 +1,304 @@
+version: '3.8'
+
+services:
+  # ==========================================
+  # MySQL 8.0 - 主数据库
+  # ==========================================
+  mysql:
+    image: mysql:8.0.33
+    container_name: mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: hm_user_db
+      TZ: Asia/Shanghai
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    command: >
+      --default-authentication-plugin=mysql_native_password
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --max-connections=500
+    networks:
+      - hm-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================
+  # Redis 7.0 - 缓存/分布式锁
+  # ==========================================
+  redis:
+    image: redis:7.0-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    command: redis-server /usr/local/etc/redis/redis.conf --requirepass 123456
+    networks:
+      - hm-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "123456", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================
+  # Nacos 2.3.0 - 服务注册/配置中心
+  # ==========================================
+  nacos:
+    image: nacos/nacos-server:v2.3.0
+    container_name: nacos
+    environment:
+      MODE: standalone
+      SPRING_DATASOURCE_PLATFORM: mysql
+      MYSQL_SERVICE_HOST: mysql
+      MYSQL_SERVICE_DB_NAME: nacos
+      MYSQL_SERVICE_PORT: 3306
+      MYSQL_SERVICE_USER: root
+      MYSQL_SERVICE_PASSWORD: root
+      NACOS_AUTH_ENABLE: "true"
+      NACOS_CORE_AUTH_SERVER_IDENTITY_KEY: serverIdentity
+      NACOS_CORE_AUTH_SERVER_IDENTITY_VALUE: security
+      NACOS_CORE_AUTH_PLUGIN_NACOS_TOKEN_SECRET_KEY: SecretKey012345678901234567890123456789012345678901234567890123456789
+    ports:
+      - "8848:8848"
+      - "9848:9848"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - nacos_data:/home/nacos/data
+    networks:
+      - hm-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8848/nacos/v1/ns/operator/metrics"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ==========================================
+  # Elasticsearch 8.11.0 - 搜索引擎
+  # ==========================================
+  elasticsearch:
+    image: elasticsearch:8.11.0
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - TZ=Asia/Shanghai
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    networks:
+      - hm-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ==========================================
+  # Kibana 8.11.0 - ES可视化
+  # ==========================================
+  kibana:
+    image: kibana:8.11.0
+    container_name: kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - xpack.security.enabled=false
+      - TZ=Asia/Shanghai
+    ports:
+      - "5601:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - hm-network
+
+  # ==========================================
+  # Zookeeper - Kafka依赖
+  # ==========================================
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+    networks:
+      - hm-network
+
+  # ==========================================
+  # Kafka 3.6.0 - 消息队列
+  # ==========================================
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - hm-network
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions.sh --bootstrap-server localhost:9092"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ==========================================
+  # Kafka UI - Kafka管理界面
+  # ==========================================
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on:
+      - kafka
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    networks:
+      - hm-network
+
+  # ==========================================
+  # RabbitMQ 3.12 - 消息队列（延时消息）
+  # ==========================================
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+      TZ: Asia/Shanghai
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - hm-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ==========================================
+  # Sentinel 1.8.6 - 流量控制控制台
+  # ==========================================
+  sentinel:
+    image: bladex/sentinel-dashboard:1.8.6
+    container_name: sentinel
+    ports:
+      - "8858:8858"
+    environment:
+      - TZ=Asia/Shanghai
+    networks:
+      - hm-network
+
+  # ==========================================
+  # Canal Server 1.1.7 - 数据同步
+  # ==========================================
+  canal-server:
+    image: canal/canal-server:v1.1.7
+    container_name: canal-server
+    ports:
+      - "11111:11111"
+    environment:
+      - canal.instance.mysql.slaveId=1234
+      - canal.instance.master.address=mysql:3306
+      - canal.instance.dbUsername=root
+      - canal.instance.dbPassword=root
+      - canal.instance.connectionCharset=UTF-8
+      - canal.instance.tsdb.enable=true
+      - canal.instance.gtidon=false
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - canal_data:/home/admin/canal-server/logs
+    networks:
+      - hm-network
+
+  # ==========================================
+  # MinIO - 对象存储（图片存储）
+  # ==========================================
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - hm-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+# ==========================================
+# 数据卷定义
+# ==========================================
+volumes:
+  mysql_data:
+    driver: local
+  redis_data:
+    driver: local
+  nacos_data:
+    driver: local
+  es_data:
+    driver: local
+  zookeeper_data:
+    driver: local
+  kafka_data:
+    driver: local
+  rabbitmq_data:
+    driver: local
+  canal_data:
+    driver: local
+  minio_data:
+    driver: local
+
+# ==========================================
+# 网络定义
+# ==========================================
+networks:
+  hm-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

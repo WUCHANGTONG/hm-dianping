@@ -1,0 +1,67 @@
+spring:
+  application:
+    name: hm-comment-service
+  profiles:
+    active: dev
+  config:
+    import:
+      - optional:nacos:${spring.application.name}-${spring.profiles.active}.${spring.cloud.nacos.config.file-extension}
+  cloud:
+    nacos:
+      discovery:
+        server-addr: 172.25.242.221:8848  # WSL Docker 中的 Nacos
+      config:
+        server-addr: 172.25.242.221:8848
+        file-extension: yaml
+    sentinel:
+      transport:
+        dashboard: 172.25.242.221:8858  # WSL Docker 中的 Sentinel
+        port: 8721
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://172.25.242.221:3307/hm_comment_db?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: root
+    password: root
+  redis:
+    host: 172.25.242.221  # WSL Docker 中的 Redis
+    port: 6379
+    password: 123456
+    lettuce:
+      pool:
+        max-active: 10
+        max-idle: 10
+        min-idle: 1
+        time-between-eviction-runs: 10s
+    # Redisson 专属配置
+    redisson:
+      config: |
+        singleServerConfig:
+          address: "redis://172.25.242.221:6379"
+          password: "123456"
+
+mybatis-plus:
+  type-aliases-package: com.hmdp.entity
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    db-config:
+      id-type: auto
+
+server:
+  port: 8083
+
+# Feign 配置
+feign:
+  sentinel:
+    enabled: true
+  client:
+    config:
+      default:
+        connectTimeout: 5000
+        readTimeout: 5000
+
+logging:
+  level:
+    com.hmdp: debug
+  pattern:
+    dateformat: HH:mm:ss:SSS

@@ -1,0 +1,89 @@
+spring:
+  application:
+    name: hm-gateway
+  profiles:
+    active: dev
+  config:
+    import:
+      - optional:nacos:${spring.application.name}-${spring.profiles.active}.${spring.cloud.nacos.config.file-extension}
+  cloud:
+    nacos:
+      discovery:
+        server-addr: 172.25.242.221:8848  # WSL Docker 中的 Nacos
+        namespace: ${nacos.namespace:}
+      config:
+        server-addr: 172.25.242.221:8848
+        file-extension: yaml
+        namespace: ${nacos.namespace:}
+    gateway:
+      discovery:
+        locator:
+          enabled: true
+          lower-case-service-id: true
+      routes:
+        # 用户服务路由
+        - id: hm-user-service
+          uri: http://127.0.0.1:8081
+          predicates:
+            - Path=/user/**,/follow/**
+          filters:
+            - StripPrefix=0
+        # 商户服务路由
+        - id: hm-shop-service
+          uri: http://127.0.0.1:8082
+          predicates:
+            - Path=/shop/**,/shop-type/**
+          filters:
+            - StripPrefix=0
+        # 点评服务路由
+        - id: hm-comment-service
+          uri: http://127.0.0.1:8083
+          predicates:
+            - Path=/blog/**,/blog-comments/**
+          filters:
+            - StripPrefix=0
+        # 秒杀服务路由
+        - id: hm-seckill-service
+          uri: http://127.0.0.1:8084
+          predicates:
+            - Path=/voucher/**,/voucher-order/**
+          filters:
+            - StripPrefix=0
+        # 搜索服务路由
+        - id: hm-search-service
+          uri: http://127.0.0.1:8085
+          predicates:
+            - Path=/search/**,/recommend/**
+          filters:
+            - StripPrefix=0
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOrigins: "*"
+            allowedMethods: "*"
+            allowedHeaders: "*"
+            allowCredentials: false
+
+# 服务端口
+server:
+  port: 8090
+
+# Sentinel 限流配置
+spring.cloud.sentinel:
+  transport:
+    dashboard: 172.25.242.221:8858  # WSL Docker 中的 Sentinel
+    port: 8719
+  scg:
+    fallback:
+      mode: response
+      response-body: '{"success":false,"errorMsg":"服务繁忙，请稍后重试"}'
+      response-status: 429
+      content-type: application/json
+
+# 日志配置
+logging:
+  level:
+    org.springframework.cloud.gateway: debug
+    com.alibaba.nacos: warn
+  pattern:
+    dateformat: HH:mm:ss:SSS

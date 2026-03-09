@@ -1,0 +1,72 @@
+server:
+  port: 8085
+
+spring:
+  application:
+    name: hm-search-service
+  profiles:
+    active: dev
+  config:
+    import:
+      - optional:nacos:${spring.application.name}-${spring.profiles.active}.${spring.cloud.nacos.config.file-extension}
+
+  # Redis配置
+  redis:
+    host: 172.25.242.221
+    port: 6379
+    password: 123456
+    lettuce:
+      pool:
+        max-active: 10
+        max-idle: 10
+        min-idle: 1
+    # Redisson 专属配置
+    redisson:
+      config: |
+        singleServerConfig:
+          address: "redis://172.25.242.221:6379"
+          password: "123456"
+
+  # Nacos配置
+  cloud:
+    nacos:
+      discovery:
+        server-addr: 172.25.242.221:8848
+      config:
+        server-addr: 172.25.242.221:8848
+        file-extension: yaml
+
+  # 数据库配置（Canal监听需要）
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://172.25.242.221:3307/hm_shop_db?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: root
+    password: root
+
+  # ES配置
+  elasticsearch:
+    host: 172.25.242.221
+    port: 9200
+    username: elastic
+    password: elastic
+
+# Canal配置
+canal:
+  server:
+    host: 172.25.242.221
+    port: 11111
+  destination: example
+  # 订阅多个数据库的变更
+  subscription: hm_user_db.tb_user,hm_shop_db.tb_shop,hm_comment_db.tb_blog
+
+# Sentinel配置
+spring.cloud.sentinel:
+  transport:
+    dashboard: 172.25.242.221:8858
+    port: 8725
+
+# 日志配置
+logging:
+  level:
+    com.hmdp.search: debug
+    co.elastic.clients: debug
